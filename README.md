@@ -21,11 +21,6 @@ Jump over giant tapioca pearls 🧋, dodge obstacles, and race to set your high 
 
 ---
 
-## 📸 Preview
-![BobaDash Screenshot](./preview.png)
-
----
-
 ## ✨ About the Creator
 Built by **thekristaleffect](https://github.com/thekristaleffect)** — gamer girl 🎮, boba lover 🧋, and aspiring indie dev 🌌.  
 Follow my journey as I blend tech, gaming, and kawaii vibes 💜.  
