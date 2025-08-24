@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Boba Dash — One-Boba Version</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; display: grid; place-items: center; background: radial-gradient(1000px 600px at 50% -200px, #c7f0ff 0%, #eaf7ff 40%, #fdfdfd 100%); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji; }
+    .wrap { display: grid; gap: 10px; padding: 16px; border-radius: 16px; background: rgba(255,255,255,0.6); backdrop-filter: blur(6px); box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+    #game { width: 800px; height: 300px; border-radius: 14px; background: linear-gradient(#bde3ff, #e7f4ff 60%, #fff 60%); box-shadow: inset 0 0 0 2px rgba(0,0,0,0.06); touch-action: manipulation; cursor: pointer; }
+    .hint { text-align: center; font-size: 14px; opacity: .7; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" width="800" height="300" aria-label="Boba Dash game"></canvas>
+    <div class="hint">Tap / Click / Space / ↑ to jump · Press R to restart</div>
+  </div>
+
+  <script>
+  (() => {
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // Logical size (CSS pixels). We'll handle DPR manually.
+    const WIDTH = 800; 
+    const HEIGHT = 300;
+
+    function fitToDPR() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(WIDTH * dpr);
+      canvas.height = Math.floor(HEIGHT * dpr);
+      canvas.style.width = WIDTH + 'px';
+      canvas.style.height = HEIGHT + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // Scale drawing ops by DPR
+    }
+    fitToDPR();
+    addEventListener('resize', fitToDPR);
+
+    // Game state
+    let state = 'ready'; // 'ready' | 'playing' | 'gameover'
+    let lastTime = 0;
+    let spawnTimer = 0;
+    let score = 0;
+    let highScore = Number(localStorage.getItem('boba_dash_highscore') || 0);
+    let gameSpeed = 6; // increases over time
+
+    const groundY = HEIGHT - 50; // visual ground line
+
+    // Player (Boba Cup)
+    const player = {
+      x: 80,
+      y: groundY - 64,
+      w: 50,
+      h: 64,
+      vy: 0,
+      vx: 0.12, // horizontal auto-run speed (px per ms)
+      targetX: 200, // where the cup runs to at the start
+      onGround: true,
+      jumpHeld: false,
+      jumpTime: 0,
+      maxHold: 160, // ms you can hold for a higher jump
+    };
+
+    // Obstacles (boba pearls)
+    const pearls = [];
+
+    function resetGame() {
+      state = 'ready';
+      score = 0;
+      gameSpeed = 6;
+      player.x = 80; // start on the left and run to target
+      player.y = groundY - player.h;
+      player.vy = 0;
+      player.onGround = true;
+      player.jumpHeld = false;
+      player.jumpTime = 0;
+      pearls.length = 0;
+      spawnTimer = 0;
+    }
+
+    function startGame() {
+      if (state !== 'playing') {
+        state = 'playing';
+        lastTime = performance.now();
+      }
+    }
+
+    function gameOver() {
+      state = 'gameover';
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('boba_dash_highscore', String(highScore));
+      }
+    }
+
+    // Controls
+    const keys = new Set();
+
+    function pressJump() {
+      if (state === 'ready') startGame();
+      if (state !== 'playing') return;
+      if (player.onGround) {
+        player.vy = -12.5; // initial jump impulse
+        player.onGround = false;
+        player.jumpHeld = true;
+        player.jumpTime = 0;
+      }
+    }
+
+    function releaseJump() { player.jumpHeld = false; }
+
+    document.addEventListener('keydown', (e) => {
+      if (['Space', 'ArrowUp', 'KeyW', 'KeyR'].includes(e.code)) e.preventDefault();
+      if (e.code === 'KeyR') { resetGame(); return; }
+      if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { pressJump(); }
+    });
+    document.addEventListener('keyup', (e) => { if (['Space','ArrowUp','KeyW'].includes(e.code)) releaseJump(); });
+
+    // Pointer/touch
+    canvas.addEventListener('pointerdown', () => { startGame(); pressJump(); });
+    canvas.addEventListener('pointerup', () => releaseJump());
+
+    // Physics constants
+    const GRAVITY = 0.6; // px/ms^2 scaled per frame
+
+    function update(dt) {
+      if (state !== 'playing') return;
+
+      // Smoothly increase speed
+      gameSpeed += 0.0008 * dt; // gentle ramp up
+
+      // Auto-run to the right a bit for visual motion
+      if (player.x < player.targetX) {
+        player.x = Math.min(player.targetX, player.x + player.vx * dt);
+      }
+
+      // Player jump physics with hold-to-jump-longer
+      if (!player.onGround) {
+        const holdingBoost = (player.jumpHeld && player.jumpTime < player.maxHold) ? 0.40 : 1.0;
+        player.vy += GRAVITY * holdingBoost;
+        player.y += player.vy;
+        player.jumpTime += dt;
+        if (player.y >= groundY - player.h) {
+          player.y = groundY - player.h;
+          player.vy = 0;
+          player.onGround = true;
+          player.jumpTime = 0;
+        }
+      }
+
+      // === ONE-BOBA-ONLY SPAWNING ===
+      spawnTimer -= dt;
+      const hasPearl = pearls.length > 0; // keep at most one on screen
+      if (!hasPearl && spawnTimer <= 0) {
+        const radius = 22; // consistent size
+        pearls.push({ x: WIDTH + radius + 10, y: groundY - radius, r: radius, passed: false });
+        // set a generous delay before the next possible spawn
+        spawnTimer = (1400 + Math.random() * 900) / (gameSpeed * 0.9);
+      }
+
+      // Move the single pearl & scoring
+      for (let i = pearls.length - 1; i >= 0; i--) {
+        const p = pearls[i];
+        p.x -= gameSpeed;
+        if (!p.passed && p.x + p.r < player.x) { p.passed = true; score += 1; }
+        if (p.x + p.r < 0) pearls.splice(i, 1); // remove when it leaves the screen
+      }
+
+      // Collisions
+      for (const p of pearls) {
+        if (rectCircleColliding(player.x + 6, player.y + 4, player.w - 12, player.h - 8, p.x, p.y, p.r * 0.9)) {
+          gameOver();
+          break;
+        }
+      }
+    }
+
+    // Collision helper: rectangle vs circle
+    function rectCircleColliding(rx, ry, rw, rh, cx, cy, cr) {
+      const closestX = clamp(cx, rx, rx + rw);
+      const closestY = clamp(cy, ry, ry + rh);
+      const dx = cx - closestX;
+      const dy = cy - closestY;
+      return (dx * dx + dy * dy) <= cr * cr;
+    }
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    // Drawing helpers
+    function drawGround() {
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, groundY + 0.5); ctx.lineTo(WIDTH, groundY + 0.5); ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+      ctx.lineWidth = 2; const dashGap = 14;
+      for (let x = (performance.now()/30) % dashGap - dashGap; x < WIDTH; x += dashGap) {
+        ctx.beginPath(); ctx.moveTo(x, groundY + 6); ctx.lineTo(x + 6, groundY + 6); ctx.stroke();
+      }
+    }
+
+    function drawBobaCup(x, y, w, h) {
+      const cupTopRadius = 12;
+      const bodyColor = '#ffe9ed';
+      const teaGradient = ctx.createLinearGradient(0, y, 0, y + h);
+      teaGradient.addColorStop(0, '#fce1a8');
+      teaGradient.addColorStop(1, '#f8b88b');
+
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.08)';
+      ctx.beginPath(); ctx.ellipse(x + w * 0.5, y + h + 10, w * 0.45, 8, 0, 0, Math.PI * 2); ctx.fill();
+
+      // Cup outline
+      roundRect(x, y, w, h, cupTopRadius, bodyColor, '#333');
+
+      // Tea inside
+      roundRect(x + 5, y + 6, w - 10, h - 12, cupTopRadius * 0.8, teaGradient, 'rgba(0,0,0,0.18)');
+
+      // Pearls inside cup (small dots)
+      ctx.fillStyle = '#3a2d2a';
+      for (let i = 0; i < 6; i++) {
+        const px = x + 12 + Math.random() * (w - 24);
+        const py = y + h - 18 - Math.random() * 28;
+        ctx.beginPath(); ctx.arc(px, py, 3 + Math.random() * 2, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // Straw
+      const strawW = 10, strawH = h * 0.9; ctx.save();
+      ctx.translate(x + w * 0.7, y - strawH * 0.35); ctx.rotate(-0.05);
+      ctx.fillStyle = '#a6d3ff'; ctx.fillRect(-strawW/2, 0, strawW, strawH);
+      ctx.strokeStyle = '#2b5c89'; ctx.lineWidth = 1.5; ctx.strokeRect(-strawW/2, 0, strawW, strawH);
+      ctx.restore();
+
+      // Face
+      const eyeY = y + h * 0.55; const eyeL = x + w * 0.32; const eyeR = x + w * 0.68;
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(eyeL, eyeY, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(eyeR, eyeY, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#222'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x + w * 0.5, eyeY + 6, 8, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    }
+
+    function roundRect(x, y, w, h, r, fillStyle, strokeStyle) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      if (fillStyle) { ctx.fillStyle = fillStyle; ctx.fill(); }
+      if (strokeStyle) { ctx.strokeStyle = strokeStyle; ctx.lineWidth = 2; ctx.stroke(); }
+    }
+
+    function drawPearl(p) {
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.beginPath(); ctx.ellipse(p.x, p.y + p.r + 6, p.r * 0.9, 6, 0, 0, Math.PI * 2); ctx.fill();
+      const g = ctx.createRadialGradient(p.x - p.r*0.3, p.y - p.r*0.3, p.r*0.2, p.x, p.y, p.r);
+      g.addColorStop(0, '#4a3a36'); g.addColorStop(1, '#2b201d');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath(); ctx.arc(p.x - p.r*0.35, p.y - p.r*0.35, p.r*0.3, 0, Math.PI * 2); ctx.fill();
+    }
+
+    function drawSky() {
+      ctx.globalAlpha = 0.25; ctx.fillStyle = '#fff';
+      const t = performance.now() * 0.02;
+      for (let i = 0; i < 6; i++) {
+        const cx = (i * 160 + (t % 160)) % (WIDTH + 200) - 100;
+        const cy = 40 + (i % 2) * 18;
+        ctx.beginPath(); ctx.ellipse(cx, cy, 40, 18, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx + 28, cy + 6, 26, 12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx - 28, cy + 6, 26, 12, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawHUD() {
+      ctx.fillStyle = '#222'; ctx.font = '16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+      ctx.textAlign = 'left'; ctx.fillText(`Score: ${score}`, 14, 24);
+      ctx.textAlign = 'right'; ctx.fillText(`Best: ${highScore}`, WIDTH - 14, 24);
+      if (state === 'ready') {
+        ctx.textAlign = 'center'; ctx.fillStyle = '#1a1a1a';
+        ctx.font = 'bold 24px ui-sans-serif, system-ui'; ctx.fillText('BOBA DASH', WIDTH/2, HEIGHT/2 - 6);
+        ctx.font = '16px ui-sans-serif, system-ui'; ctx.fillText('Tap / Click / Space / ↑ to jump', WIDTH/2, HEIGHT/2 + 22);
+      } else if (state === 'gameover') {
+        ctx.textAlign = 'center'; ctx.fillStyle = '#b00020';
+        ctx.font = 'bold 24px ui-sans-serif, system-ui'; ctx.fillText('Game Over', WIDTH/2, HEIGHT/2 - 6);
+        ctx.fillStyle = '#1a1a1a'; ctx.font = '16px ui-sans-serif, system-ui'; ctx.fillText('Press R to restart', WIDTH/2, HEIGHT/2 + 22);
+      }
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      drawSky(); drawGround();
+      drawBobaCup(player.x, player.y, player.w, player.h);
+      pearls.forEach(drawPearl);
+      drawHUD();
+    }
+
+    function loop(ts) {
+      if (!lastTime) lastTime = ts;
+      const dt = Math.min(32, ts - lastTime); // clamp dt for stability
+      lastTime = ts;
+      update(dt); render(); requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+    resetGame();
+  })();
+  </script>
+</body>
+</html>
